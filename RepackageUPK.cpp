@@ -1,5 +1,3 @@
-// ReadUPK.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
 
 
 #include <iostream>
@@ -139,7 +137,7 @@ void printHelp() {
 	" Will copy the .UPK and replace all the files in it with the ones found in the extracted folder."
 	" Cannot add, remove any of the files or change their classes or paths within the package etc.\n\n"
 	"To use, simply type:\n"
-	"  ReadUPK ORIGINAL_UPK EXTRACTED_FOLDER NEW_UPK\n"
+	"  RepackageUPK ORIGINAL_UPK EXTRACTED_FOLDER NEW_UPK\n"
 	", where:\n"
 	"  ORIGINAL_UPK is the path to the original .UPK file that you want to make a copy of,\n"
 	"  EXTRACTED_FOLDER is the path to the folder into which you extracted the contents of the ORIGINAL_UPK with gildor's tool,\n"
