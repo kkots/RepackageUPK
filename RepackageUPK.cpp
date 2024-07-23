@@ -423,6 +423,8 @@ int wmain(int argc, wchar_t** argv)
 		}
 	}
 	if (compressionFlags != 0) {
+		printf("The package is compressed. You can decompress it using gildor's decompress tool,"
+		" available on his website: https://www.gildor.org/downloads\n");
 		return 0;
 	}
 	printf("Currently at 0x%x in the file\n", ftell(file));
