@@ -12,7 +12,7 @@ Cannot add, remove any of the files or change their classes or paths within the 
 ### Syntax:
 
 ```cmd
-RepackageUPK [-dataOnly] ORIGINAL_UPK EXTRACTED_FOLDER NEW_UPK
+RepackageUPK [-dataOnly] [-info] ORIGINAL_UPK EXTRACTED_FOLDER NEW_UPK
 ```
 , where:
 	
