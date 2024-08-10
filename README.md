@@ -22,6 +22,7 @@ RepackageUPK [-dataOnly] ORIGINAL_UPK EXTRACTED_FOLDER NEW_UPK
 - **NEW_UPK** is the path, including the name and the extension, where a new .UPK copy will be created with the modified files.  
     The original .UPK will not be modified.
 - **-dataOnly** is an optional flag that prevents the tool from printing comments intended to be read by the user that are not part of JSON data structure. Such comments will however still be printed on error.
+- **-info** is an optional flag that makes the tool also print the same info it would print in the second usage mode (info only) while performing the repackage operation.
 
 
 ## Usage as info printer
