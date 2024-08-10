@@ -1,4 +1,4 @@
-
+﻿
 
 #include <iostream>
 #include <Windows.h>
@@ -119,7 +119,7 @@ void printFlags(DWORD flagField, std::vector<FlagWithName>& ar, const char* spac
 				printf("\n");
 			}
 			if (spaces) printf("%s", spaces);
-			printf("  %s", fwn.name);
+			printf("  \"%s\"", fwn.name);
 			isFirst = false;
 		}
 	}
@@ -132,19 +132,72 @@ void printFlags(DWORD flagField, std::vector<FlagWithName>& ar, const char* spac
 
 void printHelp() {
 	printf("%s\n",
-	"Simple UE3 .UPK repackager. Requires the original .UPK file and the result of its extraction via"
+	"Simple UE3 .UPK repackager or info printer.\n"
+	"\n"
+	"Usage 1:\n"
+	" Repackage UPK. Requires the original .UPK file and the result of its extraction via"
 	" gildor's extract tool (can be obtained at his website: https://www.gildor.org/downloads)."
 	" Will copy the .UPK and replace all the files in it with the ones found in the extracted folder."
-	" Cannot add, remove any of the files or change their classes or paths within the package etc.\n\n"
-	"To use, simply type:\n"
-	"  RepackageUPK ORIGINAL_UPK EXTRACTED_FOLDER NEW_UPK\n"
-	", where:\n"
-	"  ORIGINAL_UPK is the path to the original .UPK file that you want to make a copy of,\n"
-	"  EXTRACTED_FOLDER is the path to the folder into which you extracted the contents of the ORIGINAL_UPK with gildor's tool,\n"
-	"      and which contains the modified files as well,\n"
-	"  NEW_UPK is the path, including the name and the extension, where a new .UPK copy will be created with the modified files.\n"
-	"      The original .UPK will not be modified."
+	" Cannot add, remove any of the files or change their classes or paths within the package etc.\n"
+	"\n"
+	" Syntax:\n"
+	"   RepackageUPK [-dataOnly] ORIGINAL_UPK EXTRACTED_FOLDER NEW_UPK\n"
+	" , where:\n"
+	"   ORIGINAL_UPK is the path to the original .UPK file that you want to make a copy of,\n"
+	"   EXTRACTED_FOLDER is the path to the folder into which you extracted the contents of the\n"
+	"       ORIGINAL_UPK with gildor's tool, and which contains the modified files as well,\n"
+	"   NEW_UPK is the path, including the name and the extension, where a new .UPK copy will\n"
+	"       be created with the modified files.\n"
+	"       The original .UPK will not be modified.\n"
+	"   -dataOnly is an optional flag that prevents the tool from printing comments intended\n"
+	"       to be read by the user that are not part of JSON data structure.\n"
+	"       Such comments will however still be printed on error.\n"
+	"\n"
+	"Usage 2:\n"
+	" List contents of and information about the UPK.\n"
+	" Syntax:\n"
+	"   RepackageUPK -info [-dataOnly] ORIGINAL_UPK"
 	);
+}
+
+// Escapes non-ASCII characters, \, " and control characters just the way python json.dumps(ensure_ascii=True) does it.
+// Only thing this doesn't do is it put quotation marks around the resulting string.
+// And it prints it to stdout, not to a buffer.
+void printWStrAsJsonEscapedUnicode(const wchar_t* txt) {
+	while (*txt != L'\0') {
+		unsigned int codePoint = *txt;
+		++txt;
+		if (codePoint >= 0x20 && codePoint <= 126) {
+			printf("%c", codePoint);
+		} else if (codePoint == '\n') {
+			printf("%s", "\\n");
+		} else if (codePoint == '\t') {
+			printf("%s", "\\t");
+		} else if (codePoint == '\r') {
+			printf("%s", "\\r");
+		} else if (codePoint == '\f') {
+			printf("%s", "\\f");
+		} else if (codePoint == '\b') {
+			printf("%s", "\\b");
+		} else if (codePoint == '\\') {
+			printf("%s", "\\\\");
+		} else if (codePoint == '\"') {
+			printf("%s", "\\\"");
+		} else {
+			printf("\\u%.4x", codePoint);
+		}
+	}
+}
+
+// To put UTF-8 string literals into C prepend them with u8 prefix and save the file as UTF-8.
+void printUtf8StrAsJsonEscapedUnicode(const char* txt) {
+	int requiredSize = MultiByteToWideChar(CP_UTF8, NULL, txt, -1, NULL, 0);
+	if (!requiredSize) return;
+	wchar_t* buf = (wchar_t*)malloc(requiredSize * sizeof(wchar_t));
+	if (!buf) return;
+	MultiByteToWideChar(CP_UTF8, NULL, txt, -1, buf, requiredSize);
+	printWStrAsJsonEscapedUnicode(buf);
+	free(buf);
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -159,7 +212,22 @@ int wmain(int argc, wchar_t** argv)
 		HANDLE writeHandle = NULL;
 	} closeFilesAtTheEnd;
 
-	if (argc != 4) {
+	bool isInfo = false;
+	wchar_t* theOnlyOtherArg = nullptr;
+	bool isDataOnly = false;
+	for (int i = 1; i < argc; ++i) {
+		wchar_t* option = argv[i];
+		if (_wcsicmp(option, L"-info") == 0) {
+			isInfo = true;
+		} else if (_wcsicmp(option, L"-dataOnly") == 0) {
+			isDataOnly = true;
+		} else {
+			theOnlyOtherArg = option;
+		}
+	}
+	if (!isInfo) theOnlyOtherArg = nullptr;
+
+	if (isInfo && argc != (3 + isDataOnly) || !isInfo && argc != (4 + isDataOnly)) {
 		printHelp();
 		return -1;
 	}
@@ -198,24 +266,27 @@ int wmain(int argc, wchar_t** argv)
 	addNamedFlag(allExportFlags, "MemberFieldPatchPending", 0x4);
 
 	HANDLE fileHandle = CreateFileW(
-		argv[1],
+		isInfo ? theOnlyOtherArg : argv[1 + isDataOnly],
 		GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (fileHandle == INVALID_HANDLE_VALUE) {
 		std::cout << "Failed to open file\n";
 		return -1;
 	}
-	closeFilesAtTheEnd.writeHandle = fileHandle;
 	DWORD bytesWritten = 0;
-	const wchar_t* writeFileName = argv[3];
-	HANDLE writeHandle = CreateFileW(writeFileName,
-		GENERIC_WRITE, NULL, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (writeHandle == INVALID_HANDLE_VALUE) {
-		WinError err;
-		std::cout << "Failed to create file at location: ";
-		std::wcout << writeFileName << L'\n' << err.getMessage() << L'\n';
-		return -1;
+	HANDLE writeHandle = NULL;
+	if (!isInfo) {
+		closeFilesAtTheEnd.writeHandle = fileHandle;
+		const wchar_t* writeFileName = argv[3 + isDataOnly];
+		writeHandle = CreateFileW(writeFileName,
+			GENERIC_WRITE, NULL, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (writeHandle == INVALID_HANDLE_VALUE) {
+			WinError err;
+			std::cout << "Failed to create file at location: ";
+			std::wcout << writeFileName << L'\n' << err.getMessage() << L'\n';
+			return -1;
+		}
+		closeFilesAtTheEnd.writeHandle = writeHandle;
 	}
-	closeFilesAtTheEnd.writeHandle = writeHandle;
 	int fileDesc = _open_osfhandle((intptr_t)fileHandle, _O_RDONLY);
 	FILE* file = _fdopen(fileDesc, "rb");
 	closeFilesAtTheEnd.file = file;
@@ -227,11 +298,11 @@ int wmain(int argc, wchar_t** argv)
 	}
 	int fileVersion;
 	fread(&fileVersion, 4, 1, file);
-	printf("Main engine version: %hd\n", fileVersion & 0xffff);
-	printf("Licensee version: %hd\n", (fileVersion >> 16) & 0xffff);
+	printf("{\n  \"Main engine version\": %hd,\n", fileVersion & 0xffff);
+	printf("  \"Licensee version\": %hd,\n", (fileVersion >> 16) & 0xffff);
 	int totalHeaderSize;
 	fread(&totalHeaderSize, 4, 1, file);
-	printf("Total header size: 0x%x\n", totalHeaderSize);
+	printf("  \"Total header size\": \"0x%x\",\n", totalHeaderSize);
 	void* copyBuf = malloc(totalHeaderSize);
 	if (!copyBuf) {
 		printf("Not enough memory: %d\n", totalHeaderSize);
@@ -240,64 +311,69 @@ int wmain(int argc, wchar_t** argv)
 	int oldPos = ftell(file);
 	fseek(file, 0, SEEK_SET);
 	fread(copyBuf, 1, totalHeaderSize, file);
-	WriteFile(writeHandle, copyBuf, totalHeaderSize, &bytesWritten, NULL);
+	if (!isInfo) {
+		WriteFile(writeHandle, copyBuf, totalHeaderSize, &bytesWritten, NULL);
+	}
 	free(copyBuf);
 	fseek(file, oldPos, SEEK_SET);
 	std::wstring folderName;
 	readString(folderName, file);
-	printf("Foler name: %ls\n", folderName.c_str());
+	printf("  \"Foler name\": \"");
+	printWStrAsJsonEscapedUnicode(folderName.c_str());
+	printf("\",\n");
 	DWORD packageFlags;
 	fread(&packageFlags, 4, 1, file);
-	printf("Package flags: (0x%x) ", packageFlags);
-	printFlags(packageFlags, allPackageFlags);
-	printf("\n");
+	printf("  \"Package flags\": \"0x%x\",\n", packageFlags);
+	printf("  \"Package flags list\": ");
+	printFlags(packageFlags, allPackageFlags, "  ");
+	printf(",\n");
 	int nameCount;
 	fread(&nameCount, 4, 1, file);
-	printf("Name count: %d\n", nameCount);
+	printf("  \"Name count\": %d,\n", nameCount);
 	int nameOffset;
 	fread(&nameOffset, 4, 1, file);
-	printf("Name offset: 0x%x\n", nameOffset);
+	printf("  \"Name offset\": \"0x%x\",\n", nameOffset);
 	int exportCount;
 	fread(&exportCount, 4, 1, file);
-	printf("Export count: %d\n", exportCount);
+	printf("  \"Export count\": %d,\n", exportCount);
 	int exportOffset;
 	fread(&exportOffset, 4, 1, file);
-	printf("Export offset: 0x%x\n", exportOffset);
+	printf("  \"Export offset\": \"0x%x\",\n", exportOffset);
 	int importCount;
 	fread(&importCount, 4, 1, file);
-	printf("Import count: %d\n", importCount);
+	printf("  \"Import count\": %d,\n", importCount);
 	int importOffset;
 	fread(&importOffset, 4, 1, file);
-	printf("Import offset: 0x%x\n", importOffset);
+	printf("  \"Import offset\": \"0x%x\",\n", importOffset);
 	int dependsOffset;
 	fread(&dependsOffset, 4, 1, file);
-	printf("Depends offset: 0x%x\n", dependsOffset);
+	printf("  \"Depends offset\": \"0x%x\",\n", dependsOffset);
 	int importExportGuidOffsets = -1;
 	int importGuidsCount = 0;
 	int exportGuidsCount = 0;
 	if ((fileVersion & 0xffff) >= 623) {
 		fread(&importExportGuidOffsets, 4, 1, file);
-		printf("Import export guid offsets: 0x%x\n", importExportGuidOffsets);
+		printf("  \"Import export guid offsets\": \"0x%x\",\n", importExportGuidOffsets);
 		fread(&importGuidsCount, 4, 1, file);
-		printf("Import guids count: %d\n", importGuidsCount);
+		printf("  \"Import guids count\": %d,\n", importGuidsCount);
 		fread(&exportGuidsCount, 4, 1, file);
-		printf("Export guids count: %d\n", exportGuidsCount);
+		printf("  \"Export guids count\": %d,\n", exportGuidsCount);
 	}
 	int thumbnailTableOffset = 0;
 	if ((fileVersion & 0xffff) >= 584) {
 		fread(&thumbnailTableOffset, 4, 1, file);
-		printf("Thumbnail table offset: 0x%x\n", thumbnailTableOffset);
+		printf("  \"Thumbnail table offset\": \"0x%x\",\n", thumbnailTableOffset);
 	}
 	UEGuid guid;
 	readGuid(guid, file);
-	printf("Guid: ");
+	printf("  \"Guid\": \"");
 	printGuid(guid);
-	printf("\n");
+	printf("\",\n");
 	int generationCount;
 	fread(&generationCount, 4, 1, file);
-	printf("Generation count: %d\n", generationCount);
+	printf("  \"Generation count\": %d,\n", generationCount);
 	if (generationCount) {
-		printf("Generations: [\n");
+		printf("  \"Generations\": [\n");
 		for (int generationCounter = generationCount; generationCounter > 0; --generationCounter) {
 			int generationExportCount;
 			int generationNameCount;
@@ -305,32 +381,33 @@ int wmain(int argc, wchar_t** argv)
 			fread(&generationExportCount, 4, 1, file);
 			fread(&generationNameCount, 4, 1, file);
 			fread(&generationNetObjectCount, 4, 1, file);
-			printf("  {\n    Export count: %d\n", generationExportCount);
-			printf("    Name count: %d\n", generationNameCount);
-			printf("    Net object count: %d\n", generationNetObjectCount);
+			printf("    {\n      \"Export count\": %d,\n", generationExportCount);
+			printf("      \"Name count\": %d,\n", generationNameCount);
+			printf("      \"Net object count\": %d\n", generationNetObjectCount);
 			if (generationCounter == 1) {
-				printf("  }\n");
+				printf("    }\n");
 			} else {
-				printf("  },\n");
+				printf("    },\n");
 			}
 		}
-		printf("]\n");
+		printf("  ],\n");
 	}
 	int engineVersion;
 	fread(&engineVersion, 4, 1, file);
-	printf("Engine version: %d\n", engineVersion);
+	printf("  \"Engine version\": %d,\n", engineVersion);
 	int cookedContentVersion;
 	fread(&cookedContentVersion, 4, 1, file);
-	printf("Cooked content version: %d\n", cookedContentVersion);
+	printf("  \"Cooked content version\": %d,\n", cookedContentVersion);
 	DWORD compressionFlags;
 	fread(&compressionFlags, 4, 1, file);
-	printf("Compression flags: (0x%x) ", compressionFlags);
-	printFlags(compressionFlags, allCompressionFlags);
-	printf("\n");
+	printf("  \"Compression flags\": \"0x%x\",\n", compressionFlags);
+	printf("  \"Compression flags list\": ");
+	printFlags(compressionFlags, allCompressionFlags, "  ");
+	printf(",\n");
 	int compressedChunksCount;
 	fread(&compressedChunksCount, 4, 1, file);
 	if (compressedChunksCount > 0) {
-		printf("Compressed chunks: [\n");
+		printf("  \"Compressed chunks\": [\n");
 		for (int compressedChunksCounter = compressedChunksCount; compressedChunksCounter > 0; --compressedChunksCounter) {
 			int uncompressedOffset;
 			int uncompressedSize;
@@ -340,44 +417,46 @@ int wmain(int argc, wchar_t** argv)
 			fread(&uncompressedSize, 4, 1, file);
 			fread(&compressedOffset, 4, 1, file);
 			fread(&compressedSize, 4, 1, file);
-			printf("  {\n    Uncompressed offset: 0x%x\n", uncompressedOffset);
-			printf("    Uncompressed size: 0x%x\n", uncompressedSize);
-			printf("    Compressed offset: 0x%x,\n", compressedOffset);
-			printf("    Compressed size: 0x%x\n", compressedSize);
+			printf("    {\n      \"Uncompressed offset\": \"0x%x\",\n", uncompressedOffset);
+			printf("      \"Uncompressed size\": \"0x%x\",\n", uncompressedSize);
+			printf("      \"Compressed offset\": \"0x%x\",\n", compressedOffset);
+			printf("      \"Compressed size\": \"0x%x\"\n", compressedSize);
 			if (compressedChunksCounter == 1) {
-				printf("  }\n");
+				printf("    }\n");
 			} else {
-				printf("  },\n");
+				printf("    },\n");
 			}
 		}
-		printf("]\n");
+		printf("  ],\n");
 	}
 	DWORD packageSource;
 	fread(&packageSource, 4, 1, file);
-	printf("Package source: 0x%x\n", packageSource);
+	printf("  \"Package source\": \"0x%x\",\n", packageSource);
 	if ((fileVersion & 0xffff) >= 516) {
 		int additionalPackagesToCookCount;
 		fread(&additionalPackagesToCookCount, 4, 1, file);
 		if (additionalPackagesToCookCount > 0) {
-			printf("Additional packages to cook: [\n");
+			printf("  \"Additional packages to cook\": [\n");
 			for (int additionalPackagesToCookCounter = additionalPackagesToCookCount; additionalPackagesToCookCounter > 0; --additionalPackagesToCookCounter) {
 				std::wstring packageName;
 				readString(packageName, file);
-				printf("  %ls", packageName.c_str());
+				printf("    \"");
+				printWStrAsJsonEscapedUnicode(packageName.c_str());
+				printf("\"");
 				if (additionalPackagesToCookCounter == 1) {
 					printf("\n");
 				} else {
 					printf(",\n");
 				}
 			}
-			printf("]\n");
+			printf("  ],\n");
 		}
 	}
 	if ((fileVersion & 0xffff) >= 767) {
 		int textureTypesCount;
 		fread(&textureTypesCount, 4, 1, file);
 		if (textureTypesCount > 0) {
-			printf("Texture allocations.Texture types: [\n");
+			printf("  \"Texture allocations.Texture types\": [\n");
 			for (int textureTypesCounter = textureTypesCount; textureTypesCounter > 0; --textureTypesCounter) {
 				int sizeX;
 				int sizeY;
@@ -391,43 +470,44 @@ int wmain(int argc, wchar_t** argv)
 				fread(&format, 4, 1, file);
 				fread(&texCreateFlags, 4, 1, file);
 				fread(&exportIndicesCount, 4, 1, file);
-				printf("  {\n    Size X: %d,\n", sizeX);
-				printf("    Size Y: %d,\n", sizeY);
-				printf("    Num mips: %d,\n", numMips);
-				printf("    Format: %d,\n", format);
-				printf("    Tex create flags: 0x%x", texCreateFlags);
+				printf("    {\n      \"Size X\": %d,\n", sizeX);
+				printf("      \"Size Y\": %d,\n", sizeY);
+				printf("      \"Num mips\": %d,\n", numMips);
+				printf("      \"Format\": %d,\n", format);
+				printf("      \"Tex create flags\": \"0x%x\"", texCreateFlags);
 				if (exportIndicesCount > 0) {
-					printf(",\n    Export indices: [\n");
+					printf(",\n      \"Export indices\": [\n");
 					for (int exportIndicesCounter = exportIndicesCount; exportIndicesCounter > 0; --exportIndicesCounter) {
 						int exportIndex;
 						fread(&exportIndex, 4, 1, file);
-						printf("      %d", exportIndex);
+						printf("        %d", exportIndex);
 						if (exportIndicesCounter == 1) {
 							printf("\n");
 						} else {
 							printf(",\n");
 						}
 					}
-					printf("    ]");
+					printf("      ]");
 				}
-				printf("\n  }");
+				printf("\n    }");
 				if (textureTypesCounter == 1) {
 					printf("\n");
 				} else {
 					printf(",\n");
 				}
 			}
-			printf("]\n");
+			printf("  ],\n");
 		}
 	}
 	if (compressionFlags != 0) {
-		printf("The package is compressed. You can decompress it using gildor's decompress tool,"
-		" available on his website: https://www.gildor.org/downloads\n");
+		if (!isDataOnly) {
+			printf("The package is compressed. You can decompress it using gildor's decompress tool,"
+			" available on his website: https://www.gildor.org/downloads\n");
+		}
 		return 0;
 	}
-	printf("Currently at 0x%x in the file\n", ftell(file));
 	std::vector<std::wstring> names;
-	printf("Names: [");
+	printf("  \"Names\": [");
 	if (nameCount) {
 		fseek(file, nameOffset, SEEK_SET);
 		for (int nameCounter = nameCount; nameCounter > 0; --nameCounter) {
@@ -436,18 +516,20 @@ int wmain(int argc, wchar_t** argv)
 			names.push_back(name);
 			unsigned long long contextFlags;
 			fread(&contextFlags, 8, 1, file);
-			printf("\n  {\n    Name: %ls,\n", name.c_str());
-			printf("    Context flags: %llx\n  }", contextFlags);
+			printf("\n    {\n      \"Name\": \"");
+			printWStrAsJsonEscapedUnicode(name.c_str());
+			printf("\",\n");
+			printf("      \"Context flags\": \"%llx\"\n    }", contextFlags);
 			if (nameCounter != 1) {
 				printf(",");
 			}
 		}
-		printf("\n]\n");
+		printf("\n  ],\n");
 	} else {
-		printf("]\n");
+		printf("  ],\n");
 	}
 	std::vector<std::wstring> importNames;
-	printf("Imports: [");
+	printf("  \"Imports\": [");
 	if (importCount) {
 		fseek(file, importOffset, SEEK_SET);
 		for (int importCounter = importCount; importCounter > 0; --importCounter) {
@@ -460,31 +542,38 @@ int wmain(int argc, wchar_t** argv)
 		fseek(file, importOffset, SEEK_SET);
 		for (int importCounter = importCount; importCounter > 0; --importCounter) {
 			NameData classPackage = readNameData(names, file);
-			printf("\n  {\n    Class package: %ls,\n", nameDataToString(classPackage).c_str());
+			printf("\n    {\n      \"Class package\": \"");
+			printWStrAsJsonEscapedUnicode(nameDataToString(classPackage).c_str());
+			printf("\",\n");
 			NameData className = readNameData(names, file);
-			printf("    Class name: %ls,\n", nameDataToString(className).c_str());
+			printf("      \"Class name\": \"");
+			printWStrAsJsonEscapedUnicode(nameDataToString(className).c_str());
+			printf("\",\n");
 			int outerIndex;
 			fread(&outerIndex, 4, 1, file);
-			printf("    Outer index: %d,", outerIndex);
+			printf("      \"Outer index\": %d,\n", outerIndex);
 			if (outerIndex > 0) {
 				printf("Error: outer index in imports points to exports.\n");
 				return -1;
 			}
 			if (outerIndex) {
-				printf("  // points to here, into Imports, so \"%ls\"", importNames[-outerIndex - 1].c_str());
+				printf("      \"Outer index comment\": \"// points to here, into Imports, so \\\"");
+				printWStrAsJsonEscapedUnicode(importNames[-outerIndex - 1].c_str());
+				printf("\\\"\",\n");
 			}
-			printf("\n");
 			NameData objectName = readNameData(names, file);
-			printf("    Object name: %ls\n  }", nameDataToString(objectName).c_str());
+			printf("      \"Object name\": \"");
+			printWStrAsJsonEscapedUnicode(nameDataToString(objectName).c_str());
+			printf("\"\n    }");
 			if (importCounter != 1) {
 				printf(",");
 			}
 		}
-		printf("\n]\n");
+		printf("\n  ],\n");
 	} else {
-		printf("]\n");
+		printf("  ],\n");
 	}
-	printf("Exports: [");
+	printf("  \"Exports\": [");
 	struct Export {
 		int filePositionForSizeAndOffset = 0;
 		std::wstring name;
@@ -510,67 +599,82 @@ int wmain(int argc, wchar_t** argv)
 			fseek(file, 20, SEEK_CUR);
 		}
 		fseek(file, exportOffset, SEEK_SET);
+		int exportCounterStraight = 0;
 		for (int exportCounter = exportCount; exportCounter > 0; --exportCounter) {
 			Export& exportStruct = exports[exportCount - exportCounter];
 			int classIndex;
 			fread(&classIndex, 4, 1, file);
-			printf("\n  {\n    Class index: %d,", classIndex);
+			printf("\n    {\n      \"Class index\": %d,\n", classIndex);
 			if (classIndex) {
 				if (classIndex < 0) {
-					printf("  // imports[%d]: %ls", -classIndex - 1, importNames[-classIndex - 1].c_str());
+					printf("      \"Class index comment\": \"// imports[%d]: \\\"", -classIndex - 1);
+					printWStrAsJsonEscapedUnicode(importNames[-classIndex - 1].c_str());
+					printf("\\\"\",\n");
 					exportStruct.className = importNames[-classIndex - 1];
 				} else {
-					printf("  // exports[%d]: %ls", classIndex - 1, exports[classIndex - 1].name.c_str());
+					printf("      \"Class index comment\": \"// exports[%d]: \\\"", classIndex - 1);
+					printWStrAsJsonEscapedUnicode(exports[classIndex - 1].name.c_str());
+					printf("\\\"\",\n");
 					exportStruct.className = exports[classIndex - 1].name;
 				}
 			}
-			printf("\n");
 			int superIndex;
 			fread(&superIndex, 4, 1, file);
-			printf("    Super index: %d,", superIndex);
+			printf("      \"Super index\": %d,\n", superIndex);
 			if (superIndex) {
 				if (superIndex < 0) {
-					printf("  // imports[%d]: %ls", -superIndex - 1, importNames[-superIndex - 1].c_str());
+					printf("      \"Super index comment\": \"// imports[%d]: \\\"", -superIndex - 1);
+					printWStrAsJsonEscapedUnicode(importNames[-superIndex - 1].c_str());
+					printf("\\\"\",\n");
 				} else {
-					printf("  // exports[%d]: %ls", superIndex - 1, exports[superIndex - 1].name.c_str());
+					printf("      \"Super index comment\": \"// exports[%d]: \\\"", superIndex - 1);
+					printWStrAsJsonEscapedUnicode(exports[superIndex - 1].name.c_str());
+					printf("\\\"\",\n");
 				}
 			}
-			printf("\n");
 			int outerIndex;
 			fread(&outerIndex, 4, 1, file);
-			printf("    Outer index: %d,", outerIndex);
+			printf("      \"Outer index\": %d,\n", outerIndex);
 			if (outerIndex) {
 				if (outerIndex < 0) {
-					printf("  // imports[%d]: %ls", -outerIndex - 1, importNames[-outerIndex - 1].c_str());
+					printf("      \"Outer index comment\": \"// imports[%d]: \\\"", -outerIndex - 1);
+					printWStrAsJsonEscapedUnicode(importNames[-outerIndex - 1].c_str());
+					printf("\\\"\",\n");
 				} else {
-					printf("  // exports[%d]: %ls", outerIndex - 1, exports[outerIndex - 1].name.c_str());
+					printf("      \"Outer index comment\": \"// exports[%d]: \\\"", outerIndex - 1);
+					printWStrAsJsonEscapedUnicode(exports[outerIndex - 1].name.c_str());
+					printf("\\\"\",\n");
 				}
 			}
-			printf("\n");
 			exportStruct.outerIndex = outerIndex;
 			NameData objectName = readNameData(names, file);
-			printf("    Object name: %ls,\n", nameDataToString(objectName).c_str());
+			printf("      \"Object name\": \"");
+			printWStrAsJsonEscapedUnicode(nameDataToString(objectName).c_str());
+			printf("\",\n");
 			int archetypeIndex;
 			fread(&archetypeIndex, 4, 1, file);
-			printf("    Archetype index: %d,", archetypeIndex);
+			printf("      \"Archetype index\": %d,\n", archetypeIndex);
 			if (archetypeIndex) {
 				if (archetypeIndex < 0) {
-					printf("  // imports[%d]: %ls", -archetypeIndex - 1, importNames[-archetypeIndex - 1].c_str());
+					printf("      \"Archetype index comment\": \"// imports[%d]: \\\"", -archetypeIndex - 1);
+					printWStrAsJsonEscapedUnicode(importNames[-archetypeIndex - 1].c_str());
+					printf("\\\"\",\n");
 				} else {
-					printf("  // exports[%d]: %ls", archetypeIndex - 1, exports[archetypeIndex - 1].name.c_str());
+					printf("      \"Archetype index comment\": \"// exports[%d]: \\\"", archetypeIndex - 1);
+					printWStrAsJsonEscapedUnicode(exports[archetypeIndex - 1].name.c_str());
+					printf("\\\"\",\n");
 				}
 			}
-			printf("\n");
 			unsigned long long objectFlags;
 			fread(&objectFlags, 8, 1, file);
-			printf("    Object flags: 0x%llx,\n", objectFlags);
+			printf("      \"Object flags\": \"0x%llx\",\n", objectFlags);
 			exportStruct.filePositionForSizeAndOffset = ftell(file);
 			int serializeSize;
 			fread(&serializeSize, 4, 1, file);
-			printf("    Serialize size: 0x%x,\n", serializeSize);
+			printf("      \"Serialize size\": \"0x%x\",\n", serializeSize);
 			int serialOffset;
 			fread(&serialOffset, 4, 1, file);
-			printf("    Serial offset: 0x%x,\n", serialOffset);
+			printf("      \"Serial offset\": \"0x%x\",\n", serialOffset);
 			if ((fileVersion & 0xffff) < 543) {
 				int len;
 				fread(&len, 4, 1, file);
@@ -578,35 +682,38 @@ int wmain(int argc, wchar_t** argv)
 			}
 			DWORD exportFlags;
 			fread(&exportFlags, 4, 1, file);
-			printf("    Export flags: (0x%x) ", exportFlags);
-			printFlags(exportFlags, allExportFlags, "    ");
+			printf("      \"Export flags\": \"0x%x\",\n", exportFlags);
+			printf("      \"Export flags list\": ");
+			printFlags(exportFlags, allExportFlags, "      ");
 			printf(",\n");
 			int generationNetObjectCountCount;
 			fread(&generationNetObjectCountCount, 4, 1, file);
 			if (generationNetObjectCountCount > 0) {
-				printf("    Generation net object count: [\n");
+				printf("      \"Generation net object count\": [\n");
 				for (int generationNetObjectCountCounter = generationNetObjectCountCount; generationNetObjectCountCounter > 0; --generationNetObjectCountCounter) {
 					int count;
 					fread(&count, 4, 1, file);
-					printf("      %d", count);
+					printf("        %d", count);
 					if (generationNetObjectCountCounter != 1) {
 						printf(",");
 					}
 					printf("\n");
 				}
-				printf("    ],\n");
+				printf("      ],\n");
 			}
 			UEGuid exportGuid;
 			readGuid(exportGuid, file);
-			printf("    Guid: ");
+			printf("      \"Guid\": \"");
 			printGuid(exportGuid);
-			printf(",\n");
+			printf("\",\n");
 			DWORD exportPackageFlags;
 			fread(&exportPackageFlags, 4, 1, file);
-			printf("    Package flags: 0x%x\n  }", exportPackageFlags);
+			printf("      \"Index\": %d,\n", exportCounterStraight);
+			printf("      \"Package flags\": \"0x%x\"\n    }", exportPackageFlags);
 			if (exportCounter != 1) {
 				printf(",");
 			}
+			++exportCounterStraight;
 		}
 		for (int exportCounter = exportCount; exportCounter > 0; --exportCounter) {
 			Export& exportStruct = exports[exportCount - exportCounter];
@@ -621,17 +728,19 @@ int wmain(int argc, wchar_t** argv)
 			}
 			std::reverse(exportStruct.packagePath.begin(), exportStruct.packagePath.end());
 		}
-		printf("\n]\n");
+		printf("\n  ]\n");
 	} else {
-		printf("]\n");
+		printf("  ]\n");
 	}
+	printf("}\n");
+	if (isInfo) return 0;
 	if (!exportCount) return 0;
 	fseek(file, exports[0].filePositionForSizeAndOffset + 4, SEEK_SET);
 	int currentOffset;
 	fread(&currentOffset, 4, 1, file);
 	for (int exportCounter = exportCount; exportCounter > 0; --exportCounter) {
 		Export& exportStruct = exports[exportCount - exportCounter];
-		std::wstring fullPath = argv[2];
+		std::wstring fullPath = argv[2 + isDataOnly];
 		if (!fullPath.empty() && fullPath[fullPath.size() - 1] != L'\\') {
 			fullPath += L'\\';
 		}
