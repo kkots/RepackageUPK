@@ -617,65 +617,25 @@ int wmain(int argc, wchar_t** argv)
 	} else if (isInfo) {
 		printf("  ],\n");
 	}
-	std::vector<std::wstring> importNames;
-	if (isInfo) {
-		printf("  \"Imports\": [");
-	}
+	struct Import {
+		std::wstring name;
+		NameData classPackage;
+		NameData className;
+		int outerIndex;
+		NameData objectName;
+	};
+	std::vector<Import> imports;
 	if (importCount) {
 		fseek(file, importOffset, SEEK_SET);
 		for (int importCounter = importCount; importCounter > 0; --importCounter) {
-			NameData classPackage = readNameData(names, file);
-			NameData className = readNameData(names, file);
-			fseek(file, 4, SEEK_CUR);
-			NameData objectName = readNameData(names, file);
-			importNames.push_back(nameDataToString(objectName));
+			imports.emplace_back();
+			Import& importStruct = imports.back();
+			importStruct.classPackage = readNameData(names, file);
+			importStruct.className = readNameData(names, file);
+			fread(&importStruct.outerIndex, 4, 1, file);
+			importStruct.objectName = readNameData(names, file);
+			importStruct.name = nameDataToString(importStruct.objectName);
 		}
-		fseek(file, importOffset, SEEK_SET);
-		for (int importCounter = importCount; importCounter > 0; --importCounter) {
-			NameData classPackage = readNameData(names, file);
-			if (isInfo) {
-				printf("\n    {\n      \"Class package\": \"");
-				printWStrAsJsonEscapedUnicode(nameDataToString(classPackage).c_str());
-				printf("\",\n");
-			}
-			NameData className = readNameData(names, file);
-			if (isInfo) {
-				printf("      \"Class name\": \"");
-				printWStrAsJsonEscapedUnicode(nameDataToString(className).c_str());
-				printf("\",\n");
-			}
-			int outerIndex;
-			fread(&outerIndex, 4, 1, file);
-			if (isInfo) {
-				printf("      \"Outer index\": %d,\n", outerIndex);
-			}
-			if (outerIndex > 0) {
-				printf("Error: outer index in imports points to exports.\n");
-				return -1;
-			}
-			if (outerIndex && isInfo) {
-				printf("      \"Outer index comment\": \"// points to here, into Imports, so \\\"");
-				printWStrAsJsonEscapedUnicode(importNames[-outerIndex - 1].c_str());
-				printf("\\\"\",\n");
-			}
-			NameData objectName = readNameData(names, file);
-			if (isInfo) {
-				printf("      \"Object name\": \"");
-				printWStrAsJsonEscapedUnicode(nameDataToString(objectName).c_str());
-				printf("\"\n    }");
-				if (importCounter != 1) {
-					printf(",");
-				}
-			}
-		}
-		if (isInfo) {
-			printf("\n  ],\n");
-		}
-	} else if (isInfo) {
-		printf("  ],\n");
-	}
-	if (isInfo) {
-		printf("  \"Exports\": [");
 	}
 	struct Export {
 		int filePositionForSizeAndOffset = 0;
@@ -701,6 +661,43 @@ int wmain(int argc, wchar_t** argv)
 			}
 			fseek(file, 20, SEEK_CUR);
 		}
+	}
+	if (!importCount && isInfo) printf("  \"Imports\": [],\n");
+	if (importCount && isInfo) {
+		printf("  \"Imports\": [");
+		int importCounter = 0;
+		for (Import& importStruct : imports) {
+			printf("\n    {\n      \"Class package\": \"");
+			printWStrAsJsonEscapedUnicode(nameDataToString(importStruct.classPackage).c_str());
+			printf("\",\n");
+			printf("      \"Class name\": \"");
+			printWStrAsJsonEscapedUnicode(nameDataToString(importStruct.className).c_str());
+			printf("\",\n");
+			printf("      \"Outer index\": %d,\n", importStruct.outerIndex);
+			if (importStruct.outerIndex > 0) {
+				printf("      \"Outer index comment\": \"// points to exports, so \\\"");
+				printWStrAsJsonEscapedUnicode(exports[importStruct.outerIndex - 1].name.c_str());
+				printf("\\\"\",\n");
+			}
+			if (importStruct.outerIndex < 0) {
+				printf("      \"Outer index comment\": \"// points to here, into Imports, so \\\"");
+				printWStrAsJsonEscapedUnicode(imports[-importStruct.outerIndex - 1].name.c_str());
+				printf("\\\"\",\n");
+			}
+			printf("      \"Object name\": \"");
+			printWStrAsJsonEscapedUnicode(nameDataToString(importStruct.objectName).c_str());
+			printf("\"\n    }");
+			if (importCounter != imports.size() - 1) {
+				printf(",");
+			}
+			++importCounter;
+		}
+		printf("\n  ],\n");
+	}
+	if (isInfo) {
+		printf("  \"Exports\": [");
+	}
+	if (exportCount) {
 		fseek(file, exportOffset, SEEK_SET);
 		int exportCounterStraight = 0;
 		for (int exportCounter = exportCount; exportCounter > 0; --exportCounter) {
@@ -714,10 +711,10 @@ int wmain(int argc, wchar_t** argv)
 				if (classIndex < 0) {
 					if (isInfo) {
 						printf("      \"Class index comment\": \"// imports[%d]: \\\"", -classIndex - 1);
-						printWStrAsJsonEscapedUnicode(importNames[-classIndex - 1].c_str());
+						printWStrAsJsonEscapedUnicode(imports[-classIndex - 1].name.c_str());
 						printf("\\\"\",\n");
 					}
-					exportStruct.className = importNames[-classIndex - 1];
+					exportStruct.className = imports[-classIndex - 1].name;
 				} else {
 					if (isInfo) {
 						printf("      \"Class index comment\": \"// exports[%d]: \\\"", classIndex - 1);
@@ -735,7 +732,7 @@ int wmain(int argc, wchar_t** argv)
 			if (superIndex && isInfo) {
 				if (superIndex < 0) {
 					printf("      \"Super index comment\": \"// imports[%d]: \\\"", -superIndex - 1);
-					printWStrAsJsonEscapedUnicode(importNames[-superIndex - 1].c_str());
+					printWStrAsJsonEscapedUnicode(imports[-superIndex - 1].name.c_str());
 					printf("\\\"\",\n");
 				} else {
 					printf("      \"Super index comment\": \"// exports[%d]: \\\"", superIndex - 1);
@@ -751,7 +748,7 @@ int wmain(int argc, wchar_t** argv)
 			if (outerIndex && isInfo) {
 				if (outerIndex < 0) {
 					printf("      \"Outer index comment\": \"// imports[%d]: \\\"", -outerIndex - 1);
-					printWStrAsJsonEscapedUnicode(importNames[-outerIndex - 1].c_str());
+					printWStrAsJsonEscapedUnicode(imports[-outerIndex - 1].name.c_str());
 					printf("\\\"\",\n");
 				} else {
 					printf("      \"Outer index comment\": \"// exports[%d]: \\\"", outerIndex - 1);
@@ -774,7 +771,7 @@ int wmain(int argc, wchar_t** argv)
 			if (archetypeIndex && isInfo) {
 				if (archetypeIndex < 0) {
 					printf("      \"Archetype index comment\": \"// imports[%d]: \\\"", -archetypeIndex - 1);
-					printWStrAsJsonEscapedUnicode(importNames[-archetypeIndex - 1].c_str());
+					printWStrAsJsonEscapedUnicode(imports[-archetypeIndex - 1].name.c_str());
 					printf("\\\"\",\n");
 				} else {
 					printf("      \"Archetype index comment\": \"// exports[%d]: \\\"", archetypeIndex - 1);
